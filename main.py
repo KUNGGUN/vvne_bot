@@ -72,7 +72,7 @@ async def on_member_join(member):
 
 # VVNE BOT - ระบบส่งข้อความ || Slash
 
-@bot.tree.command(name='message', description='Write the message you want to send')
+@bot.tree.command(name='create_message', description='Write the message you want to send')
 @app_commands.default_permissions(administrator=True)
 @app_commands.describe(
     channel='Select the channel to send the message to',
@@ -364,7 +364,7 @@ class AnnouncementBuilderView(discord.ui.View):
             if self.options:
                 description += (
                     "\n\n"
-                    "**୨˗ˏˋ react with an emoji to vote❕୨ৎ**\n\n"
+                    "**˗ˏˋ React with an emoji to vote❕୨ৎ**\n\n"
                 )
 
                 description += "\n".join(
@@ -384,14 +384,6 @@ class AnnouncementBuilderView(discord.ui.View):
         )
 
         embed.set_author(name=ANNOUNCEMENT_AUTHOR)
-
-        embed.set_footer(
-            text=(
-                "VVNE・ANNOUNCEMENT | POLL"
-                if self.announcement_type == "poll"
-                else "VVNE・ANNOUNCEMENT | GENERAL"
-            )
-        )
 
         return embed
 
@@ -551,9 +543,9 @@ class AnnouncementBuilderView(discord.ui.View):
         self.stop()
 
         result = (
-            f"Announcement published successfully!\n"
-            f"Channel: {self.channel.mention}\n"
-            f"Message ID: `{announcement_message.id}`"
+            f"📢 Announcement published successfully!\n"
+            f"🖇️ Channel: {self.channel.mention}\n"
+            f"📬 Message ID: `{announcement_message.id}`"
         )
 
         if reaction_errors:
@@ -734,11 +726,7 @@ async def close_voteing(
 
         embed.description = (
             (embed.description or "")
-            + "\n\n🐻 **voting closed**"
-        )
-
-        embed.set_footer(
-            text="VVNE・ANNOUNCEMENT | POLL CLOSED"
+            + "\n\n🐻 **Voting closed**"
         )
 
         await poll_message.edit(embed=embed)
@@ -1139,13 +1127,9 @@ bot.add_view(AnonymousMessageView())
 async def bot_status(interaction: discord.Interaction):
 
     embed = discord.Embed(
-        title="VVNE BOT STATUS",
+        title="🖇️ VVNE BOT • Status",
         description="",
         color=0xC97734
-    )
-
-    embed.set_footer(
-        text="VVNE BOT • Status"
     )
 
     await interaction.response.send_message(
