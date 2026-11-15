@@ -1,3 +1,4 @@
+import asyncio
 import os
 import discord
 from discord import app_commands
@@ -571,7 +572,7 @@ class AnnouncementBuilderView(discord.ui.View):
 # SLASH COMMAND - ANNOUNCEMENT
 
 @bot.tree.command(
-    name="announcement",
+    name="create_announcement",
     description="Create a General or Poll announcement"
 )
 @app_commands.default_permissions(administrator=True)
@@ -672,7 +673,7 @@ async def delete_announcement(
 # CLOSE VOTING
 
 @bot.tree.command(
-    name="voteing_closed",
+    name="close_voteing",
     description="Close voting on an announcement"
 )
 @app_commands.default_permissions(administrator=True)
@@ -681,7 +682,7 @@ async def delete_announcement(
     channel="Select announcement channel",
     message_id="Announcement Message ID"
 )
-async def voteing_closed(
+async def close_voteing(
     interaction: discord.Interaction,
     channel: discord.TextChannel,
     message_id: str
@@ -1043,8 +1044,8 @@ class AnonymousMessageView(discord.ui.View):
 
 
 @bot.tree.command(
-    name="anonymous_setup",
-    description="Set up the anonymous message system"
+    name="create_anonymous",
+    description="Create an anonymous message"
 )
 @app_commands.checks.has_permissions(administrator=True)
 @app_commands.describe(
@@ -1128,6 +1129,50 @@ async def anonymous_setup_error(
 # Register persistent button view
 bot.add_view(AnonymousMessageView())
 
+
+# VVNE BOT - Status
+
+@bot.tree.command(
+    name="bot_status",
+    description="Check VVNE status"
+)
+async def bot_status(interaction: discord.Interaction):
+
+    embed = discord.Embed(
+        title="VVNE BOT STATUS",
+        description="",
+        color=0xC97734
+    )
+
+    embed.set_footer(
+        text="VVNE BOT • Status"
+    )
+
+    await interaction.response.send_message(
+        embed=embed,
+        ephemeral=True
+    )
+
+    status_lines = [
+        f"➤ {bot.user}",
+        "➤ Server is running!"
+    ]
+
+    displayed_text = ""
+
+    for line in status_lines:
+        await asyncio.sleep(0.7)
+
+        displayed_text += (
+            ("\n" if displayed_text else "")
+            + line
+        )
+
+        embed.description = displayed_text
+
+        await interaction.edit_original_response(
+            embed=embed
+        )
 
 server_on()
 
