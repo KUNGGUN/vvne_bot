@@ -105,655 +105,95 @@ async def message(
 
 # VVNE BOT - ระบบ Announcement || Slash
 
-ANNOUNCEMENT_AUTHOR = "📢 VVNE・ANNOUNCEMENT"
-ANNOUNCEMENT_COLOR = 0xC97734
+VVNE_ANNOUNCEMENT_DATA = "vvne_announcement_data.json"
+VVNE_BAR_LENGTH = 16
+VVNE_MAX_BUTTON_OPTIONS = 10
+
+def _load_announcement_data():
+    try:
+        with open(VVNE_ANNOUNCEMENT_DATA, "r", encoding="utf-8") as file:
+            data = json.load(file)
+        if not isinstance(data, dict):
+            raise ValueError("Invalid announcement data")
+    except (FileNotFoundError, json.JSONDecodeError, ValueError):
+        data = {}
+    data.setdefault("announcements", {})
+    data.setdefault("polls", {})
+    return data
+
+ANNOUNCEMENT_DATA = _load_announcement_data()
+_RESTORED_POLL_VIEWS = False
 
 
-# CHECK ANNOUNCEMENT
-
-def is_vvne_announcement(message):
-    if not bot.user or message.author.id != bot.user.id:
-        return False
-
-    if not message.embeds:
-        return False
-
-    embed = message.embeds[0]
-
-    return (
-        embed.author is not None
-        and embed.author.name == ANNOUNCEMENT_AUTHOR
-    )
+def _save_announcement_data():
+    temp_file = VVNE_ANNOUNCEMENT_DATA + ".tmp"
+    with open(temp_file, "w", encoding="utf-8") as file:
+        json.dump(ANNOUNCEMENT_DATA, file, ensure_ascii=False, indent=2)
+    os.replace(temp_file, VVNE_ANNOUNCEMENT_DATA)
 
 
-def is_poll_announcement(embed):
-    footer = embed.footer.text or ""
-    return "POLL" in footer.upper()
-
-
-# EMOJI HANDLING
-
-def parse_voting_emoji(value):
+def _parse_announcement_emoji(value):
     value = value.strip()
-
     if not value:
-        raise ValueError("Please enter an emoji")
-
-    if value.startswith("<") or value.endswith(">"):
+        raise ValueError("Please enter an emoji.")
+    if value.startswith("<") and value.endswith(">"):
         emoji = discord.PartialEmoji.from_str(value)
-
         if emoji.id is None or not emoji.name:
-            raise ValueError("Invalid Custom Emoji format")
-
-        return emoji
-
+            raise ValueError("Invalid custom emoji. Use a format such as <:name:id>.")
+        return str(emoji)
     return value
 
 
-def get_emoji_key(value):
-    emoji = parse_voting_emoji(value)
-
-    if isinstance(emoji, discord.PartialEmoji):
+def _emoji_key(value):
+    parsed = _parse_announcement_emoji(value)
+    if parsed.startswith("<"):
+        emoji = discord.PartialEmoji.from_str(parsed)
         return f"custom:{emoji.id}"
+    return f"unicode:{parsed}"
 
-    return f"unicode:{emoji}"
+
+def _is_vvne_announcement(message):
+    if bot.user is None or message.author.id != bot.user.id:
+        return False
+
+    if str(message.id) in ANNOUNCEMENT_DATA["announcements"]:
+        return True
+
+    # Backward compatibility: also recognize announcements created by the old Embed system.
+    for embed in message.embeds:
+        if embed.author and embed.author.name == "📢 VVNE・ANNOUNCEMENT":
+            return True
+    return False
 
 
-# ANNOUNCEMENT TYPE
+def _make_announcement_text(title, body):
+    return f"**{title}**\n{body}".strip()
 
-class AnnouncementTypeView(discord.ui.View):
-    def __init__(self, channel, mention_everyone):
-        super().__init__(timeout=180)
 
-        self.channel = channel
-        self.mention_everyone = mention_everyone
-
-    @discord.ui.button(
-        label="General",
-        emoji="💼",
-        style=discord.ButtonStyle.primary
-    )
-    async def general(self, interaction, button):
-        await interaction.response.send_modal(
-            AnnouncementDetailsModal(
-                self.channel,
-                self.mention_everyone,
-                "general"
-            )
+def _render_button_poll(record):
+    total = sum(len(voters) for voters in record["votes"].values())
+    lines = [f"**{record['title']}**", record["body"], ""]
+    lines.append("**Poll results**")
+    for index, option in enumerate(record["options"]):
+        voters = record["votes"].get(str(index), [])
+        count = len(voters)
+        percent = (count / total * 100) if total else 0
+        filled = round(percent / 100 * VVNE_BAR_LENGTH)
+        bar = option["bar"] * filled + "▫️" * (VVNE_BAR_LENGTH - filled)
+        lines.append(
+            f"{option['emoji']} **{option['name']}**\n"
+            f"{percent:.1f}% · {count} vote(s)\n"
+            f"{bar}"
         )
-
-    @discord.ui.button(
-        label="Poll",
-        emoji="🪴",
-        style=discord.ButtonStyle.success
-    )
-    async def poll(self, interaction, button):
-        await interaction.response.send_modal(
-            AnnouncementDetailsModal(
-                self.channel,
-                self.mention_everyone,
-                "poll"
-            )
-        )
-
-
-# ANNOUNCEMENT DETAILS
-
-class AnnouncementDetailsModal(discord.ui.Modal):
-    def __init__(self, channel, mention_everyone, announcement_type):
-        super().__init__(title="VVNE Announcement")
-
-        self.channel = channel
-        self.mention_everyone = mention_everyone
-        self.announcement_type = announcement_type
-
-        self.title_input = discord.ui.TextInput(
-            label="𐔌 🪴𓂃 Announcement Title ၄💼၃ ꒱",
-            placeholder="╰┈➤・Enter announcement title ୨୧",
-            max_length=100
-        )
-
-        self.message_input = discord.ui.TextInput(
-            label="𐔌 👢 Announcement Message :: 🍮 ꒱",
-            placeholder="╰┈➤・Enter announcement details ୨୧",
-            style=discord.TextStyle.paragraph,
-            max_length=1000
-        )
-
-        self.add_item(self.title_input)
-        self.add_item(self.message_input)
-
-    async def on_submit(self, interaction):
-        view = AnnouncementBuilderView(
-            channel=self.channel,
-            title=self.title_input.value.strip(),
-            message=self.message_input.value.strip(),
-            mention_everyone=self.mention_everyone,
-            announcement_type=self.announcement_type
-        )
-
-        await interaction.response.send_message(
-            embed=view.create_embed(),
-            view=view,
-            ephemeral=True
-        )
-
-        view.message_preview = await interaction.original_response()
-
-
-# ADD POLL OPTION
-
-class AddVotingOptionModal(discord.ui.Modal):
-    def __init__(self, builder):
-        super().__init__(title="Add Voting Option")
-
-        self.builder = builder
-
-        self.option_input = discord.ui.TextInput(
-            label="𐔌 🍁ᯓ Option Name 📋 ꒱",
-            placeholder="╰┈➤・Enter option name ୨୧",
-            max_length=45
-        )
-
-        self.emoji_input = discord.ui.TextInput(
-            label="𐔌 📬 Option Emoji 🧸 ˙ᵕ˙ ꒱",
-            placeholder="╰┈➤・Enter Unicode or Custom Emoji",
-            required=True,
-            max_length=100
-        )
-
-        self.add_item(self.option_input)
-        self.add_item(self.emoji_input)
-
-    async def on_submit(self, interaction):
-        option = self.option_input.value.strip()
-        emoji = self.emoji_input.value.strip()
-
-        if not option:
-            await interaction.response.send_message(
-                "Please enter an option name",
-                ephemeral=True
-            )
-            return
-
-        try:
-            emoji_key = get_emoji_key(emoji)
-        except ValueError as error:
-            await interaction.response.send_message(
-                str(error),
-                ephemeral=True
-            )
-            return
-
-        if len(self.builder.options) >= 20:
-            await interaction.response.send_message(
-                "You can add up to 20 voting options",
-                ephemeral=True
-            )
-            return
-
-        for existing_option, existing_emoji in self.builder.options:
-            if get_emoji_key(existing_emoji) == emoji_key:
-                await interaction.response.send_message(
-                    "This emoji has already been used",
-                    ephemeral=True
-                )
-                return
-
-        self.builder.options.append((option, emoji))
-
-        await interaction.response.defer(ephemeral=True)
-
-        try:
-            if self.builder.message_preview is None:
-                raise RuntimeError("Announcement preview not found")
-
-            await self.builder.message_preview.edit(
-                embed=self.builder.create_embed(),
-                view=self.builder
-            )
-
-            await interaction.followup.send(
-                "Voting option added successfully!",
-                ephemeral=True
-            )
-
-        except (discord.HTTPException, RuntimeError) as error:
-            self.builder.options.pop()
-
-            await interaction.followup.send(
-                f"Failed to update announcement preview: {error}",
-                ephemeral=True
-            )
-
-
-# ANNOUNCEMENT BUILDER
-
-class AnnouncementBuilderView(discord.ui.View):
-    def __init__(
-        self,
-        channel,
-        title,
-        message,
-        mention_everyone,
-        announcement_type
-    ):
-        super().__init__(timeout=900)
-
-        self.channel = channel
-        self.title = title
-        self.announcement_text = message
-        self.mention_everyone = mention_everyone
-        self.announcement_type = announcement_type
-        self.options = []
-        self.message_preview = None
-
-        if self.announcement_type == "general":
-            for item in self.children:
-                if (
-                    isinstance(item, discord.ui.Button)
-                    and item.custom_id == "vvne_add_poll_option"
-                ):
-                    self.remove_item(item)
-                    break
-
-    def create_embed(self):
-        description = self.announcement_text
-
-        if self.announcement_type == "poll":
-            if self.options:
-                description += (
-                    "\n\n"
-                    "**˗ˏˋ React with an emoji to vote❕୨ৎ**\n\n"
-                )
-
-                description += "\n".join(
-                    f"{emoji}  **{option}**"
-                    for option, emoji in self.options
-                )
-            else:
-                description += (
-                    "\n\n"
-                    "*Add voting options using the button below*"
-                )
-
-        embed = discord.Embed(
-            title=self.title,
-            description=description,
-            color=ANNOUNCEMENT_COLOR
-        )
-
-        embed.set_author(name=ANNOUNCEMENT_AUTHOR)
-
-        return embed
-
-    async def on_timeout(self):
-        for item in self.children:
-            if isinstance(item, discord.ui.Button):
-                item.disabled = True
-
-        if self.message_preview:
-            try:
-                await self.message_preview.edit(view=self)
-            except discord.HTTPException:
-                pass
-
-    @discord.ui.button(
-        label="Add Option",
-        emoji="➕",
-        style=discord.ButtonStyle.secondary,
-        custom_id="vvne_add_poll_option",
-        row=0
-    )
-    async def add_option(self, interaction, button):
-        if self.announcement_type != "poll":
-            await interaction.response.send_message(
-                "This is not a Poll announcement",
-                ephemeral=True
-            )
-            return
-
-        await interaction.response.send_modal(
-            AddVotingOptionModal(self)
-        )
-
-    @discord.ui.button(
-        label="Publish Announcement",
-        emoji="📢",
-        style=discord.ButtonStyle.success,
-        row=1
-    )
-    async def publish(self, interaction, button):
-        if self.announcement_type == "poll" and len(self.options) < 2:
-            await interaction.response.send_message(
-                "Please add at least 2 voting options",
-                ephemeral=True
-            )
-            return
-
-        guild = interaction.guild
-
-        if guild is None:
-            await interaction.response.send_message(
-                "This command can only be used in a server",
-                ephemeral=True
-            )
-            return
-
-        bot_member = guild.me
-
-        if bot_member is None:
-            await interaction.response.send_message(
-                "Unable to identify bot permissions",
-                ephemeral=True
-            )
-            return
-
-        permissions = self.channel.permissions_for(bot_member)
-
-        if not permissions.send_messages:
-            await interaction.response.send_message(
-                "The bot needs Send Messages permission",
-                ephemeral=True
-            )
-            return
-
-        if not permissions.embed_links:
-            await interaction.response.send_message(
-                "The bot needs Embed Links permission",
-                ephemeral=True
-            )
-            return
-
-        if self.mention_everyone and not permissions.mention_everyone:
-            await interaction.response.send_message(
-                "The bot needs Mention Everyone permission",
-                ephemeral=True
-            )
-            return
-
-        if self.announcement_type == "poll":
-            if not permissions.add_reactions:
-                await interaction.response.send_message(
-                    "The bot needs Add Reactions permission",
-                    ephemeral=True
-                )
-                return
-
-            for option, emoji_value in self.options:
-                emoji = parse_voting_emoji(emoji_value)
-
-                if (
-                    isinstance(emoji, discord.PartialEmoji)
-                    and guild.get_emoji(emoji.id) is None
-                    and not permissions.use_external_emojis
-                ):
-                    await interaction.response.send_message(
-                        "The bot needs Use External Emojis permission",
-                        ephemeral=True
-                    )
-                    return
-
-        await interaction.response.defer(ephemeral=True)
-
-        try:
-            announcement_message = await self.channel.send(
-                content=(
-                    "@everyone || announcement ﹒ᐟ﹒ᐟ"
-                    if self.mention_everyone
-                    else None
-                ),
-                embed=self.create_embed(),
-                allowed_mentions=discord.AllowedMentions(
-                    everyone=self.mention_everyone,
-                    users=False,
-                    roles=False
-                )
-            )
-
-        except discord.Forbidden:
-            await interaction.edit_original_response(
-                content="The bot does not have permission to publish here",
-                embed=None,
-                view=None
-            )
-            return
-
-        except discord.HTTPException as error:
-            await interaction.edit_original_response(
-                content=f"Failed to publish announcement: {error}",
-                embed=None,
-                view=None
-            )
-            return
-
-        reaction_errors = []
-
-        if self.announcement_type == "poll":
-            for option, emoji_value in self.options:
-                try:
-                    reaction = parse_voting_emoji(emoji_value)
-                    await announcement_message.add_reaction(reaction)
-
-                except (discord.HTTPException, ValueError) as error:
-                    reaction_errors.append(
-                        f"{emoji_value}: {error}"
-                    )
-
-        self.stop()
-
-        result = (
-            f"📢 Announcement published successfully!\n"
-            f"🖇️ Channel: {self.channel.mention}\n"
-            f"📬 Message ID: `{announcement_message.id}`"
-        )
-
-        if reaction_errors:
-            result += (
-                "\n\nFailed to add some reactions:\n"
-                + "\n".join(reaction_errors)
-            )
-
-        await interaction.edit_original_response(
-            content=result,
-            embed=None,
-            view=None
-        )
-
-
-# SLASH COMMAND - ANNOUNCEMENT
-
-@bot.tree.command(
-    name="create_announcement",
-    description="Create a General or Poll announcement"
-)
-@app_commands.default_permissions(administrator=True)
-@app_commands.checks.has_permissions(administrator=True)
-@app_commands.describe(
-    channel="Select announcement channel",
-    mention_everyone="Mention everyone or not"
-)
-async def announcement(
-    interaction: discord.Interaction,
-    channel: discord.TextChannel,
-    mention_everyone: bool = False
-):
-    embed = discord.Embed(
-        title="📢 VVNE・ANNOUNCEMENT BUILDER",
-        description=(
-            "Select an announcement type to get started 👢 .ᐟ\n\n"
-            "💼 **General**\n"
-            "Create a normal announcement❕\n\n"
-            "🪴 **Poll**\n"
-            "Create an announcement with voting options and emojis :: 🍮"
-        ),
-        color=ANNOUNCEMENT_COLOR
-    )
-
-    await interaction.response.send_message(
-        embed=embed,
-        view=AnnouncementTypeView(
-            channel,
-            mention_everyone
-        ),
-        ephemeral=True
-    )
-
-
-# DELETE ANNOUNCEMENT
-
-@bot.tree.command(
-    name="delete_announcement",
-    description="Delete a VVNE announcement"
-)
-@app_commands.default_permissions(administrator=True)
-@app_commands.checks.has_permissions(administrator=True)
-@app_commands.describe(
-    channel="Select announcement channel",
-    message_id="Announcement Message ID"
-)
-async def delete_announcement(
-    interaction: discord.Interaction,
-    channel: discord.TextChannel,
-    message_id: str
-):
-    if not message_id.isdigit():
-        await interaction.response.send_message(
-            "Please enter a valid Message ID",
-            ephemeral=True
-        )
-        return
-
-    try:
-        announcement_message = await channel.fetch_message(
-            int(message_id)
-        )
-
-        if not is_vvne_announcement(announcement_message):
-            await interaction.response.send_message(
-                "This is not a VVNE BOT announcement",
-                ephemeral=True
-            )
-            return
-
-        await announcement_message.delete()
-
-        await interaction.response.send_message(
-            "Announcement deleted successfully!",
-            ephemeral=True
-        )
-
-    except discord.NotFound:
-        await interaction.response.send_message(
-            "Message not found | Please check the Message ID",
-            ephemeral=True
-        )
-
-    except discord.Forbidden:
-        await interaction.response.send_message(
-            "The bot does not have permission to delete this message",
-            ephemeral=True
-        )
-
-    except discord.HTTPException as error:
-        await interaction.response.send_message(
-            f"An error occurred: {error}",
-            ephemeral=True
-        )
-
-
-# CLOSE VOTING
-
-@bot.tree.command(
-    name="close_voteing",
-    description="Close voting on an announcement"
-)
-@app_commands.default_permissions(administrator=True)
-@app_commands.checks.has_permissions(administrator=True)
-@app_commands.describe(
-    channel="Select announcement channel",
-    message_id="Announcement Message ID"
-)
-async def close_voteing(
-    interaction: discord.Interaction,
-    channel: discord.TextChannel,
-    message_id: str
-):
-    if not message_id.isdigit():
-        await interaction.response.send_message(
-            "Please enter a valid Message ID",
-            ephemeral=True
-        )
-        return
-
-    try:
-        poll_message = await channel.fetch_message(
-            int(message_id)
-        )
-
-        if not is_vvne_announcement(poll_message):
-            await interaction.response.send_message(
-                "This is not a VVNE BOT announcement",
-                ephemeral=True
-            )
-            return
-
-        embed = poll_message.embeds[0]
-
-        if not is_poll_announcement(embed):
-            await interaction.response.send_message(
-                "This announcement is not a Poll",
-                ephemeral=True
-            )
-            return
-
-        if "POLL CLOSED" in (embed.footer.text or "").upper():
-            await interaction.response.send_message(
-                "Voting is already closed",
-                ephemeral=True
-            )
-            return
-
-        bot_member = interaction.guild.me
-        permissions = channel.permissions_for(bot_member)
-
-        if not permissions.manage_messages:
-            await interaction.response.send_message(
-                "The bot needs Manage Messages permission",
-                ephemeral=True
-            )
-            return
-
-        embed.description = (
-            (embed.description or "")
-            + "\n\n🐻 **Voting closed**"
-        )
-
-        await poll_message.edit(embed=embed)
-        await poll_message.clear_reactions()
-
-        await interaction.response.send_message(
-            "Voting closed successfully!",
-            ephemeral=True
-        )
-
-    except discord.NotFound:
-        await interaction.response.send_message(
-            "Message not found | Please check the Message ID",
-            ephemeral=True
-        )
-
-    except discord.Forbidden:
-        await interaction.response.send_message(
-            "The bot does not have permission to manage this message",
-            ephemeral=True
-        )
-
-    except discord.HTTPException as error:
-        await interaction.response.send_message(
-            f"An error occurred: {error}",
-            ephemeral=True
-        )
+    if record.get("closed"):
+        lines.append("\n🔒 **Voting closed**")
+    else:
+        lines.append("\nSelect an option below to vote.")
+    return "\n".join(lines)
+
+
+def _make_voter_list(guild, user_ids):
+    names = []
 
 # VVNE BOT - ระบบฝากบอก
 
